@@ -1,15 +1,12 @@
-#include <stdio.h>
 #include "MicroTest.h"
 
 //-----Variables-----
-MicroTest_st microTest = {0};
-static int   counter   = 0;
+static int counter = 0;
 //-----Variables-----
 
 
 
 //-----Function prototypes-----
-static void putChar(char _character);
 static void testNumbers(void);
 static void testArraysAndStrings(void);
 static void testBits(void);
@@ -19,18 +16,7 @@ static void testIgnored(void);
 
 
 
-//-----Descriptors-----
-MicroTest_Descriptor_st microTestDescriptor = {
-	.putChar = putChar,
-	.flush   = NULL,
-};
-//-----Descriptors-----
-
-
-
 int main(void){
-	MicroTest_Init(&microTest, &microTestDescriptor);
-
 	MICROTEST_BEGIN();
 	MICROTEST_RUN_TEST(testNumbers);
 	MICROTEST_RUN_TEST(testArraysAndStrings);
@@ -43,12 +29,7 @@ int main(void){
 
 
 //-----Function definitions-----
-static void putChar(char _character){
-	putchar(_character);
-}
-
-void MicroTest_SetUp(MicroTest_st* _microTest){
-	(void)_microTest;
+void MicroTest_SetUp(void){
 	counter = 10;
 }
 

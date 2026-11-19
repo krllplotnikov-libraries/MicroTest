@@ -1,46 +1,34 @@
 # MicroTest
 
-Лёгкая библиотека юнит-тестов для embedded-проектов. Два файла (`MicroTest.h`, `MicroTest.c`), без Ruby, без yml, без зависимостей от libc (кроме `<stdint.h>`, `<stdbool.h>`, `<stddef.h>` и опционально `<setjmp.h>`).
+Лёгкая библиотека юнит-тестов для embedded-проектов. Тесты собираются и запускаются на хосте (gcc/clang), результаты выводятся через `printf`. Два файла (`MicroTest.h`, `MicroTest.c`), без Ruby, без yml, только стандартная библиотека C.
 
 ## Подключение
 
-Вывод идёт через указатель на функцию в дескрипторе, так что результаты можно отправлять в UART, SWO, RTT или `putchar` на хосте.
-
 ```c
 #include "MicroTest.h"
-
-MicroTest_st            microTest           = {0};
-MicroTest_Descriptor_st microTestDescriptor = {
-	.putChar = uartPutChar,  // обязательный: void (*)(char)
-	.flush   = NULL,         // необязательный: void (*)(void)
-};
 
 static void testSum(void){
 	MICROTEST_ASSERT_EQUAL_INT(4, 2 + 2);
 }
 
 int main(void){
-	MicroTest_Init(&microTest, &microTestDescriptor);
-
 	MICROTEST_BEGIN();
 	MICROTEST_RUN_TEST(testSum);
 	return (int)MICROTEST_END();  // количество упавших тестов
 }
 ```
 
+Сборка: `gcc MicroTest.c MyTest.c -lm -o MyTest && ./MyTest` (`-lm` нужен для `fabsf`).
+
 `MicroTest_SetUp` / `MicroTest_TearDown` — weak-функции; переопредели их в тестовом файле, если нужны действия до и после каждого теста.
 
 Формат вывода совместим с Unity: `file:line:test:PASS|FAIL: ...|IGNORE`.
 
-## Настройка (флаги компилятора)
+## Настройка
 
-| Флаг | Назначение |
-|---|---|
-| `MICROTEST_EXCLUDE_SETJMP` | Упавшая проверка выходит из теста через `return` вместо `longjmp`. Проверки тогда можно использовать только в `void` функциях |
-| `MICROTEST_EXCLUDE_64BIT` | Без 64-битных проверок; числа обрабатываются как 32-битные |
-| `MICROTEST_EXCLUDE_FLOAT` | Без проверок для float |
-| `MICROTEST_FLOAT_PRECISION` | Относительная точность `MICROTEST_ASSERT_EQUAL_FLOAT` (по умолчанию `0.00001f`) |
-| `MICROTEST_WEAK` | Weak-атрибут компилятора (по умолчанию `__attribute__((weak))`, для IAR — `__weak`) |
+`MICROTEST_FLOAT_PRECISION` (флаг `-D`) задаёт относительную точность `MICROTEST_ASSERT_EQUAL_FLOAT`, по умолчанию `0.00001f`.
+
+Упавшая проверка прерывает тест через `longjmp`, поэтому проверки можно вызывать и во вспомогательных функциях.
 
 ## Проверки
 
