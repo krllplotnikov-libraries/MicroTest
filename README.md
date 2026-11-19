@@ -1,47 +1,380 @@
 # MicroTest
 
-Лёгкая библиотека юнит-тестов для embedded-проектов. Тесты собираются и запускаются на хосте (gcc/clang), результаты выводятся через `printf`. Два файла (`MicroTest.h`, `MicroTest.c`), без Ruby, без yml, только стандартная библиотека C.
+MicroTest — небольшая библиотека для юнит-тестирования кода embedded-проектов на C. Аппаратно независимые части прошивки (библиотеки, модули, бизнес-логика) собираются вместе с тестами обычным компилятором на компьютере (gcc, clang) и проверяются без микроконтроллера. Результаты выводятся в консоль через `printf`.
 
-## Подключение
+Библиотека состоит из двух файлов в каталоге `src/` — `MicroTest.h` и `MicroTest.c` — и использует только стандартную библиотеку C.
+
+## Содержание
+
+- [Возможности](#возможности)
+- [Быстрый старт](#быстрый-старт)
+- [Сборка и запуск](#сборка-и-запуск)
+- [Структура тестового файла](#структура-тестового-файла)
+- [Подготовка и очистка: SetUp и TearDown](#подготовка-и-очистка-setup-и-teardown)
+- [Формат вывода](#формат-вывода)
+- [Поведение при ошибке](#поведение-при-ошибке)
+- [Справочник проверок](#справочник-проверок)
+- [Настройка](#настройка)
+- [Ограничения](#ограничения)
+
+## Возможности
+
+- Проверки логических условий, указателей, целых чисел всех размеров (8–64 бит, знаковых и беззнаковых), hex-значений, битовых масок, строк, областей памяти, массивов и чисел с плавающей точкой.
+- Сравнения на равенство, неравенство, больше/меньше и попадание в диапазон.
+- У каждой проверки есть вариант `_MESSAGE` с пояснением, которое выводится при ошибке.
+- Упавшая проверка сразу завершает тест, в том числе из вспомогательной функции.
+- Пропуск тестов (`MICROTEST_IGNORE`) и принудительный провал (`MICROTEST_FAIL`).
+- Общие функции подготовки и очистки для каждого теста.
+- Вывод в формате `файл:строка:тест:результат`: IDE и редакторы превращают такие строки в ссылки на место ошибки.
+- `MICROTEST_END()` возвращает количество упавших тестов, которое можно отдать как код возврата программы для CI.
+- Заголовок подключается и из C, и из C++.
+
+## Быстрый старт
+
+Тестовый файл `TestSum.c`:
 
 ```c
 #include "MicroTest.h"
 
-static void testSum(void){
-	MICROTEST_ASSERT_EQUAL_INT(4, 2 + 2);
+static int sum(int _a, int _b){
+	return _a + _b;
+}
+
+static void testSumOfPositive(void){
+	MICROTEST_ASSERT_EQUAL_INT(4, sum(2, 2));
+}
+
+static void testSumOfNegative(void){
+	MICROTEST_ASSERT_EQUAL_INT_MESSAGE(-4, sum(-2, -2), "sum of negative numbers");
 }
 
 int main(void){
 	MICROTEST_BEGIN();
-	MICROTEST_RUN_TEST(testSum);
-	return (int)MICROTEST_END();  // количество упавших тестов
+	MICROTEST_RUN_TEST(testSumOfPositive);
+	MICROTEST_RUN_TEST(testSumOfNegative);
+	return (int)MICROTEST_END();
 }
 ```
 
-Сборка: `gcc MicroTest.c MyTest.c -lm -o MyTest && ./MyTest` (`-lm` нужен для `fabsf`).
+Результат:
 
-`MicroTest_SetUp` / `MicroTest_TearDown` — weak-функции; переопредели их в тестовом файле, если нужны действия до и после каждого теста.
+```
+TestSum.c:17:testSumOfPositive:PASS
+TestSum.c:18:testSumOfNegative:PASS
 
-Формат вывода совместим с Unity: `file:line:test:PASS|FAIL: ...|IGNORE`.
+-----------------------
+2 Tests 0 Failures 0 Ignored
+OK
+```
+
+Полный пример с разными видами проверок: [examples/ExampleTest.c](examples/ExampleTest.c).
+
+## Сборка и запуск
+
+`src/MicroTest.c` компилируется вместе с тестовым файлом и тестируемым кодом, а каталог `src/` добавляется в пути поиска заголовков (`-I`). Флаг `-lm` нужен для функций из `<math.h>`.
+
+```bash
+gcc -IMicroTest/src MicroTest/src/MicroTest.c TestSum.c -lm -o TestSum
+```
+
+```bash
+./TestSum
+```
+
+Пример `Makefile`, где каждый тестовый файл собирается в отдельную программу и запускается:
+
+```make
+CC      = gcc
+CFLAGS  = -std=c99 -Wall -Wextra -IMicroTest/src -ILibraries/Relay -ILibraries/Button
+TESTS   = TestRelay TestButton
+
+all: $(TESTS)
+	@for test in $(TESTS); do ./$$test || exit 1; done
+
+TestRelay: MicroTest/src/MicroTest.c Tests/TestRelay.c Libraries/Relay/Relay.c
+	$(CC) $(CFLAGS) $^ -lm -o $@
+
+TestButton: MicroTest/src/MicroTest.c Tests/TestButton.c Libraries/Button/Button.c
+	$(CC) $(CFLAGS) $^ -lm -o $@
+```
+
+Так как `MICROTEST_END()` возвращает число упавших тестов, при ошибке программа завершается с ненулевым кодом, и `make` или CI останавливается.
+
+## Структура тестового файла
+
+1. Подключение `MicroTest.h` и тестируемого модуля.
+2. Тестовые функции вида `static void testName(void)`.
+3. При необходимости — переопределение `MicroTest_SetUp` и `MicroTest_TearDown`.
+4. `main`, в котором вызываются:
+
+| Макрос | Назначение |
+|---|---|
+| `MICROTEST_BEGIN()` | Начинает набор тестов: запоминает имя файла и обнуляет счётчики |
+| `MICROTEST_RUN_TEST(test)` | Запускает тестовую функцию `test`; в выводе используются её имя и строка вызова |
+| `MICROTEST_END()` | Печатает итог и возвращает количество упавших тестов (`uint32_t`) |
+
+Каждый тестовый файл обычно собирается в отдельную программу.
+
+### Тестирование модуля с аппаратными функциями
+
+Модули, которые работают с железом через указатели на функции из дескриптора, тестируются с фейковыми функциями. Фейковая функция не обращается к железу, а записывает полученные значения в переменные, которые затем проверяет тест.
+
+Пусть есть модуль реле `Relay`, который управляет выводом через функцию `setPin` из дескриптора:
+
+```c
+typedef void (*Relay_SetPin)(Relay_st* _relay, bool _state);
+
+struct Relay_Descriptor{
+	Relay_SetPin setPin;
+};
+
+void Relay_Init(Relay_st* _relay, Relay_Descriptor_st* _descriptor);
+void Relay_TurnOn(Relay_st* _relay);
+void Relay_TurnOff(Relay_st* _relay);
+```
+
+Тестовый файл для него:
+
+```c
+#include "MicroTest.h"
+#include "Relay.h"
+
+static Relay_st relay          = {0};
+static bool     lastPinState   = false;
+static uint32_t setPinCalls    = 0;
+
+static void fakeSetPin(Relay_st* _relay, bool _state){
+	(void)_relay;
+	lastPinState = _state;
+	setPinCalls++;
+}
+
+void MicroTest_SetUp(void){
+	Relay_Descriptor_st descriptor = {
+		.setPin = fakeSetPin,
+	};
+
+	lastPinState = false;
+	setPinCalls  = 0;
+	Relay_Init(&relay, &descriptor);
+}
+
+static void testTurnOnSetsPinHigh(void){
+	Relay_TurnOn(&relay);
+
+	MICROTEST_ASSERT_TRUE(lastPinState);
+	MICROTEST_ASSERT_EQUAL_UINT32(1, setPinCalls);
+}
+
+static void testTurnOffSetsPinLow(void){
+	Relay_TurnOn(&relay);
+	Relay_TurnOff(&relay);
+
+	MICROTEST_ASSERT_FALSE(lastPinState);
+}
+
+int main(void){
+	MICROTEST_BEGIN();
+	MICROTEST_RUN_TEST(testTurnOnSetsPinHigh);
+	MICROTEST_RUN_TEST(testTurnOffSetsPinLow);
+	return (int)MICROTEST_END();
+}
+```
+
+Так как `MicroTest_SetUp` вызывается перед каждым тестом, каждый тест начинается с нового состояния реле и обнулённых переменных.
+
+## Подготовка и очистка: SetUp и TearDown
+
+`MicroTest_SetUp` вызывается перед каждым тестом, `MicroTest_TearDown` — после него. В библиотеке они объявлены как weak-функции с пустым телом, поэтому определять их необязательно. Если в тестовом файле определена функция с тем же именем, вместо пустой вызывается она.
+
+```c
+void MicroTest_SetUp(void){
+	// приведение тестируемого модуля в исходное состояние
+}
+
+void MicroTest_TearDown(void){
+	// освобождение ресурсов после теста
+}
+```
+
+Порядок выполнения одного теста:
+
+1. Вызывается `MicroTest_SetUp`.
+2. Если SetUp прошёл без ошибок, вызывается сама тестовая функция.
+3. `MicroTest_TearDown` вызывается всегда, даже если тест упал или был пропущен.
+
+Проверки можно использовать и внутри SetUp и TearDown: ошибка в них засчитывается текущему тесту.
+
+## Формат вывода
+
+Для каждого теста печатается одна строка:
+
+| Результат | Формат | Строка в выводе |
+|---|---|---|
+| Успех | `файл:строка:тест:PASS` | строка вызова `MICROTEST_RUN_TEST` |
+| Ошибка | `файл:строка:тест:FAIL: описание[. сообщение]` | строка упавшей проверки |
+| Пропуск | `файл:строка:тест:IGNORE[: сообщение]` | строка `MICROTEST_IGNORE` |
+
+Примеры сообщений об ошибках:
+
+```
+TestSum.c:12:testSum:FAIL: Expected 4 Was 5. sum of positive numbers
+TestSum.c:20:testLimit:FAIL: Expected greater than 100 Was 42
+TestSum.c:27:testRange:FAIL: Expected 250 +/- 1 Was 5
+TestSum.c:33:testBuffer:FAIL: Element 2 Expected 3 Was 4
+TestSum.c:40:testName:FAIL: Expected "abc" Was "ab\x0A"
+TestSum.c:46:testPacket:FAIL: Memory mismatch at byte 2. Expected 0x03 Was 0x09
+TestSum.c:51:testFlags:FAIL: Expected 0x8 Was 0x0 (mask 0x8)
+```
+
+Непечатаемые символы в строках выводятся как `\xHH`.
+
+В конце печатается итог: количество тестов, ошибок и пропущенных тестов, а затем `OK`, если ошибок нет, или `FAIL`, если они есть.
+
+## Поведение при ошибке
+
+- Первая упавшая проверка сразу завершает тест (через `longjmp`), следующие строки теста не выполняются. Поэтому проверки можно вызывать и во вспомогательных функциях, которые вызываются из теста: ошибка всё равно завершит весь тест.
+- Для каждого теста выводится только первая ошибка.
+- После ошибки или пропуска выполняется `MicroTest_TearDown`, затем запускается следующий тест.
+
+## Справочник проверок
+
+### Общие правила
+
+- У каждой проверки есть вариант с суффиксом `_MESSAGE`. Он принимает последним аргументом строку, которая выводится после описания ошибки:
+  ```c
+  MICROTEST_ASSERT_EQUAL_UINT8(0x10, status);
+  MICROTEST_ASSERT_EQUAL_UINT8_MESSAGE(0x10, status, "status after init");
+  ```
+- Порядок аргументов: сначала ожидаемое значение, затем фактическое — `(expected, actual)`.
+- В сравнениях первым идёт порог — `(threshold, actual)`: `MICROTEST_ASSERT_GREATER_THAN_INT(5, x)` проверяет `x > 5`.
+
+### Управление тестом
+
+| Макрос | Описание |
+|---|---|
+| `MICROTEST_PASS()` | Завершает тест как успешный |
+| `MICROTEST_FAIL()` | Завершает тест с ошибкой |
+| `MICROTEST_FAIL_MESSAGE(message)` | То же с сообщением |
+| `MICROTEST_IGNORE()` | Пропускает тест: он засчитывается как пропущенный, а не упавший |
+| `MICROTEST_IGNORE_MESSAGE(message)` | То же с сообщением |
+
+### Логические условия и указатели
+
+| Макрос | Проходит, если |
+|---|---|
+| `MICROTEST_ASSERT(condition)` | `condition` истинно |
+| `MICROTEST_ASSERT_TRUE(condition)` | `condition` истинно |
+| `MICROTEST_ASSERT_FALSE(condition)` | `condition` ложно |
+| `MICROTEST_ASSERT_NULL(pointer)` | `pointer == NULL` |
+| `MICROTEST_ASSERT_NOT_NULL(pointer)` | `pointer != NULL` |
+| `MICROTEST_ASSERT_EQUAL_PTR(expected, actual)` | указатели равны |
+
+### Целые числа
+
+Вместо `T` подставляется тип:
+
+| `T` | Тип значения | Вывод |
+|---|---|---|
+| `INT` | `int` | десятичный со знаком |
+| `INT8`, `INT16`, `INT32`, `INT64` | `int8_t` … `int64_t` | десятичный со знаком |
+| `UINT` | `unsigned int` | десятичный без знака |
+| `UINT8`, `UINT16`, `UINT32`, `UINT64` | `uint8_t` … `uint64_t` | десятичный без знака |
+| `HEX8`, `HEX16`, `HEX32`, `HEX64` | `uint8_t` … `uint64_t` | hex с ведущими нулями, например `0x00FF` |
+
+| Макрос | Проходит, если |
+|---|---|
+| `MICROTEST_ASSERT_EQUAL_T(expected, actual)` | `actual == expected` |
+| `MICROTEST_ASSERT_NOT_EQUAL_T(expected, actual)` | `actual != expected` |
+| `MICROTEST_ASSERT_GREATER_THAN_T(threshold, actual)` | `actual > threshold` |
+| `MICROTEST_ASSERT_GREATER_OR_EQUAL_T(threshold, actual)` | `actual >= threshold` |
+| `MICROTEST_ASSERT_LESS_THAN_T(threshold, actual)` | `actual < threshold` |
+| `MICROTEST_ASSERT_LESS_OR_EQUAL_T(threshold, actual)` | `actual <= threshold` |
+| `MICROTEST_ASSERT_T_WITHIN(delta, expected, actual)` | `actual` отличается от `expected` не больше чем на `delta` |
+| `MICROTEST_ASSERT_EQUAL_T_ARRAY(expected, actual, count)` | первые `count` элементов массивов совпадают |
+
+Сокращения: `MICROTEST_ASSERT_EQUAL(expected, actual)` и `MICROTEST_ASSERT_NOT_EQUAL(expected, actual)` работают как варианты с `INT`.
+
+Примеры:
+
+```c
+MICROTEST_ASSERT_EQUAL_UINT16(1000, adcValue);
+MICROTEST_ASSERT_EQUAL_HEX8(0xA5, registerValue);
+MICROTEST_ASSERT_LESS_THAN_UINT32(500, elapsedMs);
+MICROTEST_ASSERT_INT16_WITHIN(5, 250, temperature);
+
+const uint8_t expectedFrame[] = {0x01, 0x03, 0x00, 0x10};
+MICROTEST_ASSERT_EQUAL_UINT8_ARRAY(expectedFrame, frame, sizeof(expectedFrame));
+```
+
+Особенности:
+
+- Оба значения приводятся к типу `T` до сравнения. Поэтому `MICROTEST_ASSERT_EQUAL_INT8(-1, 255)` проходит: `255`, приведённое к `int8_t`, равно `-1`. Тип в проверке выбирается по типу тестируемой переменной.
+- Для массивов `T` определяет размер элемента, поэтому он должен совпадать с типом элементов массива. `count` — количество элементов, а не байт.
+- Проверка массива с `count == 0` или с `NULL` вместо массива завершается ошибкой.
+
+### Биты
+
+| Макрос | Проходит, если |
+|---|---|
+| `MICROTEST_ASSERT_BITS(mask, expected, actual)` | `(actual & mask) == (expected & mask)` |
+| `MICROTEST_ASSERT_BITS_HIGH(mask, actual)` | все биты из `mask` установлены в `actual` |
+| `MICROTEST_ASSERT_BITS_LOW(mask, actual)` | все биты из `mask` сброшены в `actual` |
+| `MICROTEST_ASSERT_BIT_HIGH(bit, actual)` | бит с номером `bit` установлен |
+| `MICROTEST_ASSERT_BIT_LOW(bit, actual)` | бит с номером `bit` сброшен |
+
+```c
+MICROTEST_ASSERT_BITS(0x0F, 0x05, controlRegister);  // младшая тетрада равна 0x5
+MICROTEST_ASSERT_BIT_HIGH(7, statusRegister);        // бит 7 установлен
+```
+
+### Строки и память
+
+| Макрос | Проходит, если |
+|---|---|
+| `MICROTEST_ASSERT_EQUAL_STRING(expected, actual)` | строки совпадают целиком |
+| `MICROTEST_ASSERT_EQUAL_STRING_LEN(expected, actual, length)` | совпадают первые `length` символов |
+| `MICROTEST_ASSERT_EQUAL_MEMORY(expected, actual, length)` | совпадают первые `length` байт |
+
+- Две строки `NULL` считаются равными, `NULL` и обычная строка — разными.
+- При ошибке `EQUAL_MEMORY` выводит номер первого несовпадающего байта и оба значения.
+- `EQUAL_MEMORY` с `length == 0` или с `NULL` завершается ошибкой.
+
+### Числа с плавающей точкой
+
+| Макрос | Проходит, если |
+|---|---|
+| `MICROTEST_ASSERT_FLOAT_WITHIN(delta, expected, actual)` | `actual` отличается от `expected` не больше чем на `delta` |
+| `MICROTEST_ASSERT_EQUAL_FLOAT(expected, actual)` | `actual` отличается от `expected` не больше чем на `expected * MICROTEST_FLOAT_PRECISION` |
+| `MICROTEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, actual, count)` | каждый элемент проходит `EQUAL_FLOAT` |
+| `MICROTEST_ASSERT_FLOAT_IS_INF(actual)` | `actual` равно `+inf` |
+| `MICROTEST_ASSERT_FLOAT_IS_NEG_INF(actual)` | `actual` равно `-inf` |
+| `MICROTEST_ASSERT_FLOAT_IS_NAN(actual)` | `actual` равно `nan` |
+| `MICROTEST_ASSERT_FLOAT_IS_NOT_NAN(actual)` | `actual` не равно `nan` |
+
+- Сравнивать float через `==` ненадёжно из-за ошибок округления: `0.1f + 0.2f` не равно в точности `0.3f`. Для этого и нужны `EQUAL_FLOAT` и `FLOAT_WITHIN`:
+  ```c
+  MICROTEST_ASSERT_EQUAL_FLOAT(0.3f, 0.1f + 0.2f);
+  MICROTEST_ASSERT_FLOAT_WITHIN(0.01f, 3.14f, calculatedPi);
+  ```
+- Бесконечности равны только бесконечностям того же знака. `nan` не равно ничему, даже `nan`, поэтому для него есть отдельная проверка `FLOAT_IS_NAN`.
+- Если ожидаемое значение `0.0f`, `EQUAL_FLOAT` требует точного нуля; для значений около нуля используется `FLOAT_WITHIN`.
 
 ## Настройка
 
-`MICROTEST_FLOAT_PRECISION` (флаг `-D`) задаёт относительную точность `MICROTEST_ASSERT_EQUAL_FLOAT`, по умолчанию `0.00001f`.
+| Параметр | По умолчанию | Описание |
+|---|---|---|
+| `MICROTEST_FLOAT_PRECISION` | `0.00001f` | Относительная точность `MICROTEST_ASSERT_EQUAL_FLOAT` и `MICROTEST_ASSERT_EQUAL_FLOAT_ARRAY` |
 
-Упавшая проверка прерывает тест через `longjmp`, поэтому проверки можно вызывать и во вспомогательных функциях.
+Параметр задаётся флагом компилятора:
 
-## Проверки
+```bash
+gcc -DMICROTEST_FLOAT_PRECISION=0.001f -IMicroTest/src MicroTest/src/MicroTest.c TestSum.c -lm -o TestSum
+```
 
-У каждой проверки есть вариант `_MESSAGE` с дополнительным последним аргументом — текстом сообщения.
+## Ограничения
 
-- Управление: `MICROTEST_PASS`, `MICROTEST_FAIL`, `MICROTEST_IGNORE`
-- Логические и указатели: `MICROTEST_ASSERT`, `_TRUE`, `_FALSE`, `_NULL`, `_NOT_NULL`, `_EQUAL_PTR`
-- Числа (`T` = `INT`, `INT8..64`, `UINT`, `UINT8..64`, `HEX8..64`):
-  `EQUAL_T`, `NOT_EQUAL_T`, `GREATER_THAN_T`, `GREATER_OR_EQUAL_T`, `LESS_THAN_T`, `LESS_OR_EQUAL_T`, `T_WITHIN`, `EQUAL_T_ARRAY`
-- Биты: `BITS`, `BITS_HIGH`, `BITS_LOW`, `BIT_HIGH`, `BIT_LOW`
-- Строки и память: `EQUAL_STRING`, `EQUAL_STRING_LEN`, `EQUAL_MEMORY`
-- Float: `FLOAT_WITHIN`, `EQUAL_FLOAT`, `EQUAL_FLOAT_ARRAY`, `FLOAT_IS_INF`, `FLOAT_IS_NEG_INF`, `FLOAT_IS_NAN`, `FLOAT_IS_NOT_NAN`
-
-Порядок аргументов как в Unity: `(expected, actual)`, а для сравнений `(threshold, actual)`. Например, `MICROTEST_ASSERT_GREATER_THAN_INT(5, x)` проверяет `x > 5`.
-
-Полный пример: [Examples/ExampleTest.c](Examples/ExampleTest.c).
+- Библиотека рассчитана на запуск тестов на компьютере, а не на микроконтроллере.
+- `MicroTest_SetUp` и `MicroTest_TearDown` общие для всей программы. Чтобы у разных модулей были свои функции подготовки, каждый тестовый файл собирается в отдельную программу.
+- Проверок для `double` нет: значения `double` в проверках float приводятся к `float`.
+- Weak-функции объявлены через `__attribute__((weak))`, который поддерживают gcc и clang.
