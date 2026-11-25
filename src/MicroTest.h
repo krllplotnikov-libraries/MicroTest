@@ -12,6 +12,7 @@
 
 //-----Configuration-----
 // MICROTEST_FLOAT_PRECISION - relative precision of MICROTEST_ASSERT_EQUAL_FLOAT, can be overridden with -D.
+// It is substituted in the test file, so it also works with the installed (precompiled) library.
 #ifndef MICROTEST_FLOAT_PRECISION
 #define MICROTEST_FLOAT_PRECISION 0.00001f
 #endif
@@ -367,9 +368,10 @@
 #define MICROTEST_ASSERT_FLOAT_WITHIN_MESSAGE(delta, expected, actual, message) \
 	MICROTEST_INTERNAL_CHECK(MicroTest_AssertFloatWithin((float)(delta), (float)(expected), (float)(actual), MICROTEST_INTERNAL_LINE, (message)))
 #define MICROTEST_ASSERT_EQUAL_FLOAT_MESSAGE(expected, actual, message) \
-	MICROTEST_INTERNAL_CHECK(MicroTest_AssertEqualFloat((float)(expected), (float)(actual), MICROTEST_INTERNAL_LINE, (message)))
+	MICROTEST_INTERNAL_CHECK(MicroTest_AssertEqualFloat((float)(expected), (float)(actual), (float)(MICROTEST_FLOAT_PRECISION), MICROTEST_INTERNAL_LINE, (message)))
 #define MICROTEST_ASSERT_EQUAL_FLOAT_ARRAY_MESSAGE(expected, actual, count, message) \
-	MICROTEST_INTERNAL_CHECK(MicroTest_AssertEqualFloatArray((const float*)(expected), (const float*)(actual), (uint32_t)(count), MICROTEST_INTERNAL_LINE, (message)))
+	MICROTEST_INTERNAL_CHECK(MicroTest_AssertEqualFloatArray((const float*)(expected), (const float*)(actual), (uint32_t)(count), (float)(MICROTEST_FLOAT_PRECISION), \
+	                                                         MICROTEST_INTERNAL_LINE, (message)))
 #define MICROTEST_ASSERT_FLOAT_IS_INF_MESSAGE(actual, message) \
 	MICROTEST_INTERNAL_CHECK(MicroTest_AssertFloatTrait((float)(actual), MICROTEST_FLOAT_TRAIT_INF, MICROTEST_INTERNAL_LINE, (message)))
 #define MICROTEST_ASSERT_FLOAT_IS_NEG_INF_MESSAGE(actual, message) \
@@ -447,8 +449,9 @@ bool     MicroTest_AssertBits(uint64_t _mask, uint64_t _expected, uint64_t _actu
 bool     MicroTest_AssertEqualString(const char* _expected, const char* _actual, uint32_t _maxLength, uint32_t _line, const char* _message);
 bool     MicroTest_AssertEqualMemory(const void* _expected, const void* _actual, uint32_t _length, uint32_t _line, const char* _message);
 bool     MicroTest_AssertFloatWithin(float _delta, float _expected, float _actual, uint32_t _line, const char* _message);
-bool     MicroTest_AssertEqualFloat(float _expected, float _actual, uint32_t _line, const char* _message);
-bool     MicroTest_AssertEqualFloatArray(const float* _expected, const float* _actual, uint32_t _count, uint32_t _line, const char* _message);
+bool     MicroTest_AssertEqualFloat(float _expected, float _actual, float _precision, uint32_t _line, const char* _message);
+bool     MicroTest_AssertEqualFloatArray(const float* _expected, const float* _actual, uint32_t _count, float _precision,
+                                         uint32_t _line, const char* _message);
 bool     MicroTest_AssertFloatTrait(float _actual, MicroTest_FloatTrait_et _trait, uint32_t _line, const char* _message);
 
 //-----Weak-----

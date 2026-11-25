@@ -304,11 +304,11 @@ bool MicroTest_AssertFloatWithin(float _delta, float _expected, float _actual, u
 	return false;
 }
 
-bool MicroTest_AssertEqualFloat(float _expected, float _actual, uint32_t _line, const char* _message){
+bool MicroTest_AssertEqualFloat(float _expected, float _actual, float _precision, uint32_t _line, const char* _message){
 	if(isAborted()){
 		return false;
 	}
-	if(floatsWithin(_expected * MICROTEST_FLOAT_PRECISION, _expected, _actual)){
+	if(floatsWithin(_expected * _precision, _expected, _actual)){
 		return true;
 	}
 
@@ -318,7 +318,8 @@ bool MicroTest_AssertEqualFloat(float _expected, float _actual, uint32_t _line, 
 	return false;
 }
 
-bool MicroTest_AssertEqualFloatArray(const float* _expected, const float* _actual, uint32_t _count, uint32_t _line, const char* _message){
+bool MicroTest_AssertEqualFloatArray(const float* _expected, const float* _actual, uint32_t _count, float _precision,
+                                     uint32_t _line, const char* _message){
 	if(isAborted()){
 		return false;
 	}
@@ -327,7 +328,7 @@ bool MicroTest_AssertEqualFloatArray(const float* _expected, const float* _actua
 	}
 
 	for(uint32_t i = 0; i < _count; i++){
-		if(floatsWithin(_expected[i] * MICROTEST_FLOAT_PRECISION, _expected[i], _actual[i]) == false){
+		if(floatsWithin(_expected[i] * _precision, _expected[i], _actual[i]) == false){
 			beginFailure(_line);
 			printf("Element %" PRIu32 " Expected %g Was %g", i, (double)_expected[i], (double)_actual[i]);
 			endFailure(_message);
@@ -383,8 +384,12 @@ bool MicroTest_AssertFloatTrait(float _actual, MicroTest_FloatTrait_et _trait, u
 }
 
 //-----Weak-----
+// The installed library is built with MICROTEST_LIBRARY: the default SetUp and TearDown are then
+// separate archive members (src/Defaults) and weak symbols are not needed.
+#ifndef MICROTEST_LIBRARY
 __attribute__((weak)) void MicroTest_SetUp(void){}
 __attribute__((weak)) void MicroTest_TearDown(void){}
+#endif
 //-----Weak-----
 
 static bool isAborted(void){

@@ -4,10 +4,16 @@ MicroTest — небольшая библиотека для юнит-тести
 
 Библиотека состоит из двух файлов в каталоге `src/` — `MicroTest.h` и `MicroTest.c` — и использует только стандартную библиотеку C.
 
+Есть два способа подключения:
+
+- **установка в систему** (Linux и Windows) — библиотека ставится один раз, тесты любого проекта подключают её через `-lMicroTest`, `pkg-config` или `find_package` в CMake. Копировать её в проект не нужно;
+- **исходники в проекте** — `MicroTest.c` компилируется вместе с тестами (например, если библиотека добавлена в проект как git submodule).
+
 ## Содержание
 
 - [Возможности](#возможности)
 - [Быстрый старт](#быстрый-старт)
+- [Установка в систему](#установка-в-систему)
 - [Сборка и запуск](#сборка-и-запуск)
 - [Структура тестового файла](#структура-тестового-файла)
 - [Подготовка и очистка: SetUp и TearDown](#подготовка-и-очистка-setup-и-teardown)
@@ -69,9 +75,94 @@ OK
 
 Полный пример с разными видами проверок: [examples/ExampleTest.c](examples/ExampleTest.c).
 
+## Установка в систему
+
+Нужны CMake 3.14+ и компилятор C (gcc или clang; на Windows — MinGW-w64, например из MSYS2). Устанавливаются:
+
+| Файл | Куда |
+|---|---|
+| `MicroTest.h` | `<prefix>/include` |
+| `libMicroTest.a` | `<prefix>/lib` |
+| CMake-пакет `MicroTestConfig.cmake` | `<prefix>/lib/cmake/MicroTest` |
+| `MicroTest.pc` для pkg-config | `<prefix>/lib/pkgconfig` |
+
+### Linux
+
+```bash
+git clone https://github.com/krllplotnikov-libraries/MicroTest.git
+cd MicroTest
+./install.sh               # в /usr/local, спросит пароль sudo
+```
+
+Другой каталог: `./install.sh ~/.local`. Удаление: `./install.sh --uninstall`.
+
+`/usr/local/include` и `/usr/local/lib` gcc и clang просматривают по умолчанию, поэтому после установки в `/usr/local` флаги `-I` и `-L` не нужны.
+
+### Windows
+
+В PowerShell:
+
+```powershell
+git clone https://github.com/krllplotnikov-libraries/MicroTest.git
+cd MicroTest
+.\install.ps1
+```
+
+Или двойной клик по `install.bat`.
+
+Если в `PATH` есть `gcc.exe` (MSYS2, MinGW-w64), библиотека устанавливается в каталог этого компилятора: например, для `C:\msys64\ucrt64\bin\gcc.exe` — в `C:\msys64\ucrt64`. Этот gcc сам находит там заголовок и библиотеку, флаги `-I` и `-L` не нужны. Если gcc не найден, библиотека собирается компилятором по умолчанию для CMake (MSVC) и устанавливается в `%LOCALAPPDATA%\MicroTest`.
+
+Другой каталог: `.\install.ps1 -Prefix C:\Libs\MicroTest`. Удаление: `.\install.ps1 -Uninstall`.
+
+### Вручную через CMake
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=<prefix>
+cmake --build build --config Release
+cmake --install build --config Release
+cmake --build build --target uninstall     # удаление
+```
+
+Опция `-DMICROTEST_BUILD_EXAMPLES=ON` дополнительно собирает `examples/ExampleTest.c` и регистрирует его для `ctest`.
+
+### Подключение установленной библиотеки
+
+Напрямую компилятором:
+
+```bash
+gcc Tests/TestRelay.c Libraries/Relay/Relay.c -ILibraries/Relay -lMicroTest -lm -o TestRelay
+```
+
+Если библиотека установлена в нестандартный каталог, добавьте `-I<prefix>/include -L<prefix>/lib`.
+
+Через pkg-config:
+
+```bash
+gcc Tests/TestRelay.c Libraries/Relay/Relay.c -ILibraries/Relay $(pkg-config --cflags --libs MicroTest) -o TestRelay
+```
+
+Через CMake:
+
+```cmake
+find_package(MicroTest 1.0 REQUIRED)
+
+add_executable(TestRelay Tests/TestRelay.c Libraries/Relay/Relay.c)
+target_include_directories(TestRelay PRIVATE Libraries/Relay)
+target_link_libraries(TestRelay PRIVATE MicroTest::MicroTest)
+```
+
+Если CMake не находит пакет, укажите каталог установки: `-DCMAKE_PREFIX_PATH=<prefix>`.
+
+Особенности установленной библиотеки:
+
+- Она статическая (`.a`/`.lib`). Динамическая не подходит: свои `MicroTest_SetUp` и `MicroTest_TearDown` тестового файла должны заменять стандартные, а DLL на Windows так не умеет.
+- Weak-символы в ней не используются: стандартные пустые `MicroTest_SetUp` и `MicroTest_TearDown` лежат в отдельных объектных файлах (`src/Defaults/`), и компоновщик берёт их, только если в тесте нет своей функции с тем же именем. Поэтому это работает на любом компоновщике, включая MinGW и MSVC.
+- `MICROTEST_FLOAT_PRECISION` подставляется в тестовом файле, поэтому `-DMICROTEST_FLOAT_PRECISION=...` работает и с готовой библиотекой.
+- Библиотеку надо собирать тем же компилятором, что и тесты: `libMicroTest.a` из MinGW не подойдёт для MSVC, и наоборот.
+
 ## Сборка и запуск
 
-`src/MicroTest.c` компилируется вместе с тестовым файлом и тестируемым кодом, а каталог `src/` добавляется в пути поиска заголовков (`-I`). Флаг `-lm` нужен для функций из `<math.h>`.
+Этот раздел — для подключения исходниками, без установки. `src/MicroTest.c` компилируется вместе с тестовым файлом и тестируемым кодом, а каталог `src/` добавляется в пути поиска заголовков (`-I`). Флаг `-lm` нужен для функций из `<math.h>`.
 
 ```bash
 gcc -IMicroTest/src MicroTest/src/MicroTest.c TestSum.c -lm -o TestSum
@@ -377,4 +468,4 @@ gcc -DMICROTEST_FLOAT_PRECISION=0.001f -IMicroTest/src MicroTest/src/MicroTest.c
 - Библиотека рассчитана на запуск тестов на компьютере, а не на микроконтроллере.
 - `MicroTest_SetUp` и `MicroTest_TearDown` общие для всей программы. Чтобы у разных модулей были свои функции подготовки, каждый тестовый файл собирается в отдельную программу.
 - Проверок для `double` нет: значения `double` в проверках float приводятся к `float`.
-- Weak-функции объявлены через `__attribute__((weak))`, который поддерживают gcc и clang.
+- При подключении исходниками weak-функции объявлены через `__attribute__((weak))`, который поддерживают gcc и clang. В установленной библиотеке weak-символы не используются (см. [Установка в систему](#установка-в-систему)).
